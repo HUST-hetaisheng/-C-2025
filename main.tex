@@ -1,0 +1,1563 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[UTF8]{ctex}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{supertabular}
+\usepackage{geometry}  % 先加载 geometry 宏包
+\geometry{a4paper, left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}  % 再设置参数
+\usepackage{booktabs}
+\usepackage{tocloft}
+\usepackage{float}
+\usepackage[colorlinks=true, linkcolor=blue, filecolor=magenta, urlcolor=cyan]{hyperref}
+\usepackage{titlesec}
+\usepackage{setspace}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{caption}   % 可选，用于美化标题
+\usepackage{subcaption}% 可选，用于插入子图
+\renewcommand{\abstractname}{%
+    \centering\heiti\zihao{3}% 原有格式（居中、黑体、三号字）
+    摘\kern 0.6em要% 关键：在“摘”和“要”之间插入0.6em间距
+}
+\title{基于广义线性模型与机器学习的NIPT检测优化及女胎染色体异常判别研究}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\vspace{-2cm}
+\begin{abstract}
+\vspace{0.8cm}
+本文主要解决无创产前检测（NIPT）中由孕妇个体差异导致的检测时点不精准和女胎染色体异常判定难问题。本文基于孕妇临床数据（孕周、BMI、染色体浓度等），通过多模型融合（含二次项的广义线性模型、多元逻辑回归模型、决策树模型）构建分析框架，并据此推导风险函数。采用迭代边界微调以及SMOTE算法，建立男胎Y染色体浓度和孕妇临床指标的关联模型，求出不同影响因素下风险最低的男胎孕妇BMI分组、每组最优检测时点和女胎染色体异常判别问题的临床判定规则，并对模型进行了检验和误差分析。
+
+针对问题一男胎Y染色体浓度与孕妇指标的关联问题，构建含二次项（$GA^2$、$BMI^2$）及交互项（$GA \times BMI$）的广义线性模型（GLM）；为确定是否保留交叉项，进行联合Wald检验，结果为$W=15.592$，$df=3$，$p=0.001375$，非线性项联合显著，故保留交叉项。GLM拟合结果表明：孕周与Y染色体浓度呈\textbf{显著正相关}（$\beta_1=0.0579$，$p<0.001$），BMI与其呈\textbf{显著负相关}（$\beta_2=-0.0750$，$p<0.001$）。
+
+针对问题二BMI分组与最优检测时点优化问题，通过反标准化还原真实数据，定义多检风险与晚检风险构建风险函数（权重$\lambda_1=0.7$、$\lambda_2=0.3$），采用分位数初始分组与迭代边界微调，将267名孕妇划分为5组，求得最佳BMI分位数为\textbf{20.714，29.896，30.941，32.680，34.387，46.864}，各组最优检测时点分别为\textbf{17.52，20.61，16.25，18.42，18.03}周。
+
+针对问题三多因素影响下的检测优化问题，在问题二的基础上引入年龄、身高、体重等特征，采用SMOTE算法处理Y染色体浓度二项化数据的类别不平衡，构建多元逻辑回归模型。在模型测试集中AUC达到\textbf{0.999}，F1值为\textbf{0.985}。最后对模型进行敏感性分析，确认模型\textbf{稳健性良好}。求得最佳各组BMI范围为\textbf{（20.71-29.90）,（29.90-30.96），（30.96-32.68），（32.68-34.39），（34.39-46.86）}，各组最优检测时点分别\textbf{12.12,11.78,12.36,11.89,12.23}周。
+
+针对问题四女胎染色体异常判别问题，基于女胎数据中的15项指标（如X染色体Z值、GC含量、读段比例等），构建随机\textbf{决策树模型}。通过特征重要性筛选出核心指标,模型在训练集上的准确率达\textbf{84.8$\%$}、交叉验证集准确率达\textbf{81.8$\%$}，可以直接输出有实践意义的临床判定规则，具有较高的实际应用价值。\\
+
+\noindent\textbf{关键词：} 无创产前检测（NIPT）；广义线性模型（GLM）；SMOTE过采样；决策树；风险优化；染色体异常判别
+\end{abstract}
+\newpage
+%\tableofcontents
+
+\newpage
+
+\section{问题重述}
+
+\subsection{问题背景}
+畸形胎儿的形成主要是由于胎儿在子宫内发生了结构或染色体异常，受遗传因素、环境因素等多种综合因素影响较大。尽管自计划生育政策成为基本国策以来，优生优育的观念越来越深入人心,但我国的畸形胎儿率仍然较高。\textsuperscript{\cite{1}}因此，探索出一种更安全、准确、可靠的产前筛查技术尤为重要。无创产前检测（NIPT）作为一种新兴的产前筛查手段，备受关注。NIPT通过采集母体血液，检测胎儿的游离DNA片段，分析21号、18号、13号染色体浓度是否正常来确定胎儿的健康状况，如果出现浓度异常，越早期发现风险越低。通常孕妇10周\textasciitilde25周之间的胎儿性染色体浓度正常（男胎Y染色体浓度大于等于4\%、女胎X染色体浓度没有异常），才能保证NIPT检测结果达到准确性要求。但实践表明，男胎Y染色体浓度与孕妇孕周期数及其BMI关系紧密，而这些因素存在明显的个体差异，所以根据经验简单地对孕妇分组并统一规定检测时点，对NIPT检测准确性影响较大，加剧孕妇因胎儿不健康而缩短治疗周期的潜在风险。为了解决该问题，需要通过对实例的数据分析和数学建模来确定各类孕妇群体合适的NIPT时点并同时保证检测的准确性。
+
+\subsection{问题提出}
+C题中的附件包含了孕妇的基本信息、BMI、妊娠特征、检测采样和胎儿致病染色体（如21号、18号、13号）、性染色体浓度参数等信息。本文基于上述数据，建立数学模型，解决以下问题：
+
+
+（1）要求分析胎儿Y染色体浓度与孕妇孕周数和BMI等指标之间的相关性，构建关联模型，并检验模型显著性。
+   
+（2） 基于临床证明，以男胎孕妇BMI为影响胎儿Y染色体浓度≥4\%的最早达标时间的主要因素。要求确定使孕妇潜在风险最小的BMI分组、各组BMI区间和相应的最佳NIPT时点，并进一步分析检测误差对结果产生的影响
+    
+（3） 要求依据男胎孕妇的BMI，综合考虑身高、体重、年龄等多种因素，检测误差和胎儿Y染色体浓度≥4\%的比例，确定最小化孕妇潜在风险的BMI分组和每组的最佳NIPT时点，并分析检测误差对结果的影响。
+    
+（4）鉴于无法通过Y染色体浓度判断女胎是否异常，要求以女胎孕妇的21号、18号及13号染色体非整倍体判定结果为基准，综合考量X染色体和上述染色体的Z值、GC含量、读段数及其相关比例，BMI等多维指标，构建女胎染色体异常的判别模型。
+
+
+\section{问题分析}
+
+\subsection{问题一的分析}
+问题一要求分析胎儿Y染色体浓度与孕妇的孕周数、BMI的相关特性，构建三者间的关系模型并检验模型的显著性。
+
+针对问题一，首先对原始数据进行预处理：将附件中孕妇周数列210行异常数据进行清洗和处理，以确保后续所建模型的准确性和稳定性；应用python代码将孕周数形如“X周+Y天”的临床记录统一转化为用天数表示；孕周数和BMI量纲和数值范围差异较大，为消除量纲对模型系数的影响，本文采用Z-score法对数据进行标准化处理，为后续的回归分析奠定基础。
+
+建立GLM二元逻辑回归模型。充分考虑因变量t胎儿Y染色体浓度的统计特性,其不满足普通线性回归的经典假设，因此本文假设胎儿Y染色体浓度是一个有下界（0）且呈正偏态分布的连续变量，构建GLM（广义线性回归模型）更科学、更精确地分析孕周数和BMI对Y染色体浓度的影响。分析Kendall三元相互系数和Spearman相关系数，分别证明变量的相关关系显著和相关性的强度强。
+
+本文最后从主效应和交互效应两个维度对模型的显著性进行全面检验。先分别计算GA主效应、BMI主效应回归系数$\beta$、p值，分析判断单个指标对胎儿Y染色体浓度的影响。再计算交互效应中孕周数和BMI交互项p值，判断两者之间的交互效应是否显著，得出结论。
+
+问题一总体分析流程图如下:
+
+\begin{figure}[H]
+    \centering
+     \includegraphics[width=0.8\textwidth]{问题一思维导图.png}
+    \caption{问题一的总分析}
+\end{figure}
+
+
+\subsection{问题二的分析}
+问题二要求依据BMI对孕妇进行分组，同时确定每组的NIPT检测时点，通过优化BMI分组和检测时点，使潜在风险最小化。首先在数据准备阶段，需要对BMI和孕周数进行反标准化，使其恢复至合理范围内的真实数值。然后按孕妇代码进行分组，计算每个孕妇的平均BMI、平均孕周等关键指标。在问题一中，已经建立了关于孕周数、BMI和Y染色体浓度的GLM回归模型，以该模型为基础，可以对问题二进行分析解决。
+
+为了在最小化潜在风险的前提下确定最佳BMI分组、检测时点，首先利用线性插值遍历该孕妇的所有检测记录，确定其Y染色体浓度首次达到并持续超过4\%阈值的时间窗口，记为临界时间。其次量化风险，多检误差、晚检误差作为解释变量利用回归方程计算个体风险，各组所有孕妇的个体风险之和则为该分组的总风险。若对于一个固定的分组，可以采取单变量优化的方法求解，但总体风险与各个组别都有关系，并且分组不固定。因此，初始采取分位数进行分组，保证各组人数大致相等后，动态优化BMI分组边界，通过迭代优化不断调整分组的边界，直到全局总风险无法进一步降低。此时的分组边界和对应的检测时间即为最优解。
+
+问题二总体分析流程图如下:
+\begin{figure}[H]
+    \centering
+     \includegraphics[width=0.8\textwidth]{问题二思维导图.png}
+    \caption{问题二的总分析}
+\end{figure}
+\subsection{问题三的分析}
+问题三是在问题二的基础上再考虑其他多种因素、检测误差对胎儿Y染色体浓度达标的影响，重新给出风险最小化时的BMI分组和各组最优检测时点。
+在数据清洗之后，对每一条男性胎儿检测记录按Y染色体浓度是否达标设置二分类标签。构建多元Logistic回归模型用于预测在某一孕周条件下Y染色体浓度达标概率，重点注意平衡类别，避免浓度低于4$\%$被误判为达标。分别得到多项回归系数$\beta$，分析各组$R^2$、AOC、F1分数、准确率、混淆矩阵等。最后将结果进行平滑处理，得到相关概率值。通过概率对各个个体构建风险函数，求解出风险函数的最小值以及相应的最佳检测时间点。
+\subsection{问题四的分析}
+问题四是针对女胎染色体非整倍体的异常性检测，作为一个多特征二分类问题，本文通过附件中的女胎数据建立决策树分类模型。通过设置决策树的深度、分支规则等，先计算特征重要性，然后利用数据中的各个特征训练得到决策树结构，最后得到决策树分类模型以及模型的分类评估结果、实际医学应用价值。\\
+
+\section{模型假设}
+\begin{enumerate}
+    \item 假设附件中提供的孕妇相关信息和数据是准确可靠的，尽管存在部分缺失或异常值，仍可用于建模分析。
+    \item 假设只有男胎Y染色体浓度达到或超过4\%时，才认为NIPT检测结果基本准确；低于4\%则检测结果不可靠。   
+    \item 假设孕妇从第10周可以开始进行NIPT检测，且最佳检测时点应在Y染色体浓度达标之后，尽量在早期或中期，以控制风险时间窗口降低风险。    
+    \item 假设考虑检测误差和重复测量对结果的影响。    
+    \item 假设女胎异常判定指标（如21号、18号、13号染色体的非整倍体（AB列）和X染色体的Z值、GC含量、读段数）与胎儿健康状况相关。   
+    \item 假设GC含量在40\%$\sim$60\%之间（可上下浮动2\%）为正常范围，超出该范围表示测序的质量问题，不代表胎儿异常。    
+    \item 假设问题1只考虑胎儿Y染色体浓度、孕妇孕周数和BMI三个因素的影响，对所有样本分析这三个因素不考虑其他个体差异，并假设Y染色体浓度和BMI有明显的相关性，最高只考虑到二次的交互影响。   
+    \item 假设男胎孕妇的BMI是影响胎儿Y染色体浓度最早达标时间的主要因素，且该因素与其他未考虑因素相互独立，即其他因素对Y染色体浓度最早达标时间的影响可忽略不计。
+\end{enumerate}
+
+\section{符号说明}
+
+\begin{table}[h]
+    \centering
+    \caption{本文的符号说明}
+    \begin{tabular}{ccc}
+        \toprule
+        \textbf{符号} & \textbf{说明} & \textbf{单位} \\
+        \midrule
+        $E[V]$ & Y染色体浓度达到$4\%$的期望概率 & \\
+        $GA$ & 孕周（天数） & 天 \\
+        $\beta_k, k=0,1,2,3,4,5$ & GLM系数 & \\
+        $\textbf{R}$ & 约束矩阵 & \\
+        $W$ & Wald统计量 & \\
+        $t^*$ & 线性插值得出的Y染色体浓度达标时间 & \\
+        $\tau（=0.04）$ & Y染色体浓度临界达标点 & \\
+        $t_{\text{critical}}$ & Y染色体浓度达标时间 & \\
+        $t_{\text{detect}}$ & NIPT检测时点 & \\
+        $E_{\text{multi}}$ & 发生多检风险的概率 & \\
+        $E_{\text{late}}$ & 发生晚检风险的概率 & \\
+        $Q_k, k=0,1,2,3,4,5$ & BMI分组分位数 & \\
+        $G_k, k=1,2,3,4,5$ & BMI分组 & \\
+        $t_k, k=1,2,3,4,5$ & 第$k$组BMI分组孕妇的最佳检测时点 & \\
+        $R_j(t)$ & 个体$j$在时点$t$检测的风险 & \\
+        $N$ & 训练集中个体总数 & \\
+        $M_i$ & 个体i的检测次数 & \\
+        $\textbf{x}_{ij}$ & 个体i第j次检测的特征向量& \\
+        $y_{ij}$ & 个体i第j次检测的达标标签 & \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[h]
+    \centering
+    
+\end{figure}
+
+\section{模型建立与求解}
+\subsection{问题一模型的建立与求解}
+\subsubsection{数据预处理}
+
+检查附件中数据：男胎共1082行数据，12行数据缺少末次月经日期，956行数据缺少染色体的非整倍体，对缺失的行对应位置填充为正常，其余数据完整；女胎共605行数据，1行孕妇BMI缺失，该孕妇的身高为162cm,体重为85kg,根据公式得出其BMI值为32.39，将计算出的值填充进去；8行末次月经日期缺失，对于缺失数据，由于其均为同一个体(编号A108 A139 A159)且缺失数据量不大,直接取该列的均值(时间取平均)进行填充。
+
+问题一二三都研究胎儿Y染色体浓度、BMI、孕周数之间关系，仅与男胎数据有关。因此再次检查男胎孕周数据：发现210行的数据格式“16W+1”与其余数据不一致，改为“16w+1”；检查男胎各组数据的GC值含量，发现最高值为0.421373，最低值为0.38625。根据本文假设，我们认为所有数据的GC值含量\textbf{没有}明显超出正常范围，所有数据的测序质量均可接受，无需删除任何数据。
+
+为方便模型拟合，将形如“16w+1”的孕周数改写为孕天数（$16 \times 7 + 1$）。相应的Python脚本见于附件。由于BMI和孕天数的单位不一，且数值范围差异较大，采用Z-score法对孕妇BMI和孕天数进行数据标准化处理。处理后，三项数据的分布区间：
+\textbf{Y染色体浓度范围: [0.0100, 0.2342]}，
+\textbf{孕周范围: [-1.43, 2.98]}，
+\textbf{BMI范围: [-3.90, 4.91]}。
+
+对于处理后的数据，为了便于直观描述数据分布以及它们之间的变化关系，我们按照孕妇代码进行分组，利用Python绘图库，分别画出Y染色体浓度与孕周（天）数、孕妇BMI值的散点关系图以及三者的三维分布图,如下所示：
+
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=0.8\textwidth]{问题一可视化1.png}
+    \caption{男胎数据可视化：Y染色体浓度和孕周、BMI的关系分布}
+    \label{fig:可视化1}
+\end{figure}
+
+绘出年龄、身高、体重、孕妇BMI、GC含量、Y染色体浓度、孕周（天）两两之间的Spearman相关系数热力图如下：
+
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=1\textwidth]{问题一热力图.png}
+    \caption{问题一热力图}
+    \label{fig:可视化2}
+\end{figure}
+图\ref{fig:可视化1}中的数据点较为分散，说明存在其他影响因素。从图\ref{fig:可视化2}中可以看出孕周数与Y染色体浓度为正相关，相关系数-0.155。而BMI和Y染色体浓度有显著的负相关性，相关系数为0.084。
+
+\subsubsection{广义线性模型（GLM）的建立}
+广义线性模型（GLM）可以使用于多种类型的数据分布，也不要求自变量和因变量之间是线性关系，比较适用于本题建模。我们选择二项Logit模型，考虑BMI和孕周数的一次项、二次项、交叉项，拟合与Y染色体浓度的关系。
+
+将Y染色体浓度转换为二分类变量$V$，其中$V = 1$表示浓度$\geq 4\%$，$V=0$表示浓度$< 4\%$。模型结构为：
+\begin{equation}
+\log\left(\frac{E[V]}{1 - E[V]}\right) = \beta_0 + \beta_1 \cdot \text{GA} + \beta_2 \cdot \text{BMI} + \beta_3 \cdot \text{GA}^2 + \beta_4 \cdot \text{BMI}^2 + \beta_5 \cdot (\text{GA} \times \text{BMI})
+\end{equation}
+其中$E[V]$是Y染色体浓度达到$4\%$的期望概率，GA是孕周（天）数，BMI即孕妇BMI。我们分别设置了线性项、二次项、交叉项，以提高拟合准确度,Logit函数的表达式为：
+\begin{equation}
+\text{Logit}(p) = \log\left(\frac{p}{1 - p}\right)
+\end{equation}
+\subsubsection{GLM模型的求解}
+采用最大似然估计（MLE）方法拟合模型参数，使用SPSSPRO进行计算。拟合结果得到系数估计值：
+$\beta_0 = -2.4885$（截距），$\beta_1 = 0.0579$（GA的线性项系数），$\beta_2 = -0.0750$（BMI的线性项系数），$\beta_3 = 0.0241$（GA$^2$的系数），$\beta_4 = -0.0269$（BMI$^2$的系数），$\beta_5 = 0.0265$（GA $\times$ BMI的交互项系数）。
+
+因此，模型方程为：
+
+$$\log\left(\frac{E[V]}{1 - E[V]}\right) = -2.4885 + 0.0579 \cdot \text{GA} - 0.0750 \cdot \text{BMI} + 0.0241 \cdot \text{GA}^2 - 0.0269 \cdot \text{BMI}^2 + 0.0265 \cdot (\text{GA} \times \text{BMI})$$
+
+\subsubsection{GLM模型求解结果的分析}
+SPSSPRO给出的系数显著性检验数据如表\textbf{2}所示，其中$z$统计量是系数与标准误的比值，$|z|>1.96$可视为显著（$\alpha=0.05$）。$P$值为显著性水平（$P<0.05$显著，$P<0.01$非常显著，$P<0.001$极显著）。
+
+\begin{table}[H]
+\centering
+\caption{GLM系数显著性检验}
+\begin{tabular}{cccc}
+\toprule
+系数 & 估计值 & $z$统计量 & $P$值 \\
+\midrule
+$\beta_0$ (截距) & -2.4885 & - & $<0.001$ \\
+$\beta_1$ (GA) & 0.0579 & 3.694 & $<0.001$ \\
+$\beta_2$ (BMI) & -0.0750 & -4.210 & $<0.001$ \\
+$\beta_3$ (GA$^2$) & 0.0241 & 1.890 & 0.059 \\
+$\beta_4$ (BMI$^2$) & -0.0269 & -2.450 & 0.014 \\
+$\beta_5$ (GA$\times$BMI) & 0.0265 & 1.520 & 0.128 \\
+\bottomrule
+\end{tabular}
+\end{table}
+由$p$值可以看出，模型截距项、线性项和BMI二次项显著性高。但GA$^2$项边缘显著，BMI和GA交叉项不显著。从$z=3.694$可看出GA对于因变量存在显著的正向影响；而BMI则存在显著的负向影响。这与数据预处理中的图像结论相同。
+
+由于$\beta_5$表现为并不显著，需要决定是否留下该项。
+
+为了判断孕周二次项（$GA^2$）、BMI二次项（$BMI^2$）与孕周-BMI交互项（$GA \times BMI$）是否联合显著，我们对之进行联合Wald检验。
+
+待检验参数设为二次项系数$\beta_3$（对应$GA^2$）、$\beta_4$（对应$BMI^2$）与交互项系数$\beta_5$（对应$GA \times BMI$）。原假设（$H_0$）与备择假设（$H_1$）定义为：  
+\begin{equation}
+\begin{cases}
+H_0: \beta_3 = 0 \quad \text{且} \quad \beta_4 = 0 \quad \text{且} \quad \beta_5 = 0 \\
+H_1: \beta_3, \beta_4, \beta_5 \text{中至少一个不为0}
+\end{cases}
+\end{equation} 
+$H_0$表示所有非线性项均无效应，$H_1$表示至少一个非线性项存在效应。
+构造$3 \times 6$维约束矩阵$\boldsymbol{R}$（矩阵维度由“待检验参数个数$\times$总参数个数”确定，总参数为$\beta_0 \sim \beta_5$共6个），从而对$\beta_3, \beta_4, \beta_5$施加“系数为0”的约束。
+
+\begin{equation} 
+\boldsymbol{R} = 
+\begin{pmatrix}
+0 & 0 & 0 & 1 & 0 & 0 \\
+0 & 0 & 0 & 0 & 1 & 0 \\
+0 & 0 & 0 & 0 & 0 & 1
+\end{pmatrix}
+\end{equation} 
+矩阵中“1”的位置对应待检验参数$\beta_3, \beta_4, \beta_5$的索引（第4、5、6列），“0”表示不对其他参数（$\beta_0 \sim \beta_2$）施加约束。  
+Wald统计量公式为：  
+\begin{equation} 
+W = \left( \boldsymbol{R} \hat{\boldsymbol{\beta}} \right)^T \left( \boldsymbol{R} \hat{\Sigma} \boldsymbol{R}^T \right)^{-1} \left( \boldsymbol{R} \hat{\boldsymbol{\beta}} \right) \tag{2}
+\end{equation} 
+其中：  
+- $\hat{\boldsymbol{\beta}} = \left( \hat{\beta}_0, \hat{\beta}_1, \hat{\beta}_2, \hat{\beta}_3, \hat{\beta}_4, \hat{\beta}_5 \right)^T$为所有参数的极大似然估计向量；  
+- $\boldsymbol{R} \hat{\boldsymbol{\beta}}$为待检验参数的估计值向量（维度$3 \times 1$）；  
+- $\boldsymbol{R} \hat{\Sigma} \boldsymbol{R}^T$为待检验参数估计值的协方差矩阵（维度$3 \times 3$），其逆矩阵$\left( \boldsymbol{R} \hat{\Sigma} \boldsymbol{R}^T \right)^{-1}$用于加权调整参数间的相关性。
+
+根据构造的GLM模型，得到如下结果：
+
+Wald统计量\textbf{$W = 15.592$ },
+自由度：3  ,  
+ $p$值=\textbf{0.001375}.
+
+由于$p = 0.001375 < 0.01$，拒绝原假设$H_0$.这表明孕周二次项、BMI二次项与孕周-BMI交互项联合显著。纳入非线性项可有效表现孕周、BMI与Y染色体浓度（$V$）间的关系。保留非线性项可以保证模型拟合的有效性。
+
+模型显示，在实际意义上，BMI越高，Y染色体浓度越低，BMI更低的孕妇在早期NLPT检验的结果更加准确。随着孕周数的增加，Y染色体浓度加速上升。
+
+此外现有大量研究也表明胎儿Y染色体浓度与孕周数正相关、与BMI负相关。针对胎儿Y染色体浓度与孕周关系，一项涵盖13661例单胎妊娠的研究\textsuperscript{\cite{3}}表明尽管在孕早期胎儿DNA浓度与孕周关系不显著，但随孕周增加而胎儿染色体浓度显著上升，尤其是跨越到第二孕期（14-27周）的上升更为明显。针对Y染色体浓度与BMI关系，有研究通过对BMI分组：低体重组（BMI$<$18.5）胎儿分数约13.2\%，健康组12.1\%，超重组约9.99\%，肥胖组（BMI$\geq$30）约8.91\%，该结果清晰展示了孕妇胎儿染色体浓度随BMI增加显著降低。也有研究从生物学角度指出：高BMI的母体cfDNA含量高导致“稀释效应”使胎儿DNA浓度相对偏低\textsuperscript{\cite{4}}。可见多项研究一致指出BMI增加胎儿染色体浓度显著降低。而关注孕周数和BMI两项对胎儿Y染色体影响的研究则采用回归公式证明了以上结论。
+
+综上所述，胎儿染色体浓度与孕周数呈显著正相关，与BMI呈显著负相关，与本文结论一致。
+
+由于不同BMI值的孕妇各项指标(如Y染色体浓度等)存在显著差别，因此我们对孕妇的BMI值进行一个初步的分组，分析不同BMI范围内孕妇各指标的分布以及变化关系，从而为第二问分析不同BMI分组的最优NIPT检测点奠定基础，综合表格中数据，利用基本统计方法，得到如下所示的可视化图表:
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=0.8\textwidth]{问题一可视化3.png}
+    \caption{不同BMI分组和Y染色体浓度的关系}
+    \label{fig:可视化3}
+\end{figure}
+\subsection{问题二模型的建立与求解}
+
+\subsubsection{数据预处理}
+
+本问题使用的数据来源于某地区孕妇的NIPT检测数据，包含267个孕妇个体的多次检测记录。数据预处理过程如下：
+
+\textbf{步骤1：数据清洗与编码处理}
+将BMI中的缺失值用该列同一个体其他BMI值的均值替代，数据编码均采用GBK格式。
+
+\textbf{步骤2：数据标准化与反标准化}
+原始数据中的BMI和孕周已进行标准化处理，需要反标准化到实际值：
+\begin{align}
+BMI_{real} &= BMI_{std} \times \sigma_{BMI} + \mu_{BMI} \\
+GA_{real} &= GA_{std} \times \sigma_{GA} + \mu_{GA}
+\end{align}
+其中：$\mu_{BMI} = 32.29$，$\sigma_{BMI} = 2.97$；$\mu_{GA} = 117.92$，$\sigma_{GA} = 28.52$。
+
+\textbf{步骤3：个体数据聚合}
+按孕妇代码分组，计算每个个体的平均BMI和孕周：
+\begin{align}
+BMI_i &= \frac{1}{n_i} \sum_{j=1}^{n_i} BMI_{ij} \\
+GA_i &= \frac{1}{n_i} \sum_{j=1}^{n_i} GA_{ij}
+\end{align}
+其中$n_i$为个体$i$的检测次数。
+
+\textbf{步骤4：数据范围约束}
+为确保数据合理性，对BMI和孕周进行范围约束：
+\begin{align}
+BMI_{real} &\in [15, 50] \\
+GA_{real} &\in [70, 200] \text{天}
+\end{align}
+
+\subsubsection{临界时点计算模型的建立}
+
+Y染色体浓度达到检测阈值$\tau = 0.04$后NIPT检测准确性纺可达标。不同个体达到此阈值的时间存在差异，观察题目中不同孕妇的Y染色体浓度变化情况，可以进行简单分类，制定不同的临界时点确定策略。
+
+\textbf{临界时点确定策略}
+
+根据Y染色体浓度观测值的不同情况，采用不同的临界时点确定策略：
+
+\textbf{情况1：全低于阈值}
+若$\forall j, y_{ij} < \tau$，则：
+\begin{equation}
+t_{critical}^{(i)} = \max\{t_{ij}\}
+\end{equation}
+此时任何检测时间均为多检风险。
+
+\textbf{情况2：全高于阈值}
+若$\forall j, y_{ij} > \tau$，则：
+\begin{equation}
+t_{critical}^{(i)} = \min\{t_{ij}\}
+\end{equation}
+此时根据胎儿健康状况计算晚检风险。
+
+\textbf{情况3：存在跨越阈值}
+通过线性插值求交点：
+\begin{equation}
+t^* = t_k + \frac{\tau - y_k}{y_{k+1} - y_k} \times (t_{k+1} - t_k)
+\end{equation}
+
+跨越方向判断：
+\begin{align}
+\text{方向} &= \begin{cases}
+1, & \text{if } y_k < \tau \text{ and } y_{k+1} > \tau \text{ (从下到上)} \\
+-1, & \text{if } y_k > \tau \text{ and } y_{k+1} < \tau \text{ (从上到下)}
+\end{cases}
+\end{align}
+
+\textbf{临界时点分类}
+\begin{enumerate}
+    \item \textbf{单个上跨越}：$t_{critical}^{(i)} = t^*$，表示首次达到阈值
+    \item \textbf{单个下跨越}：$t_{critical}^{(i)} = t^*$，表示最后低于阈值
+    \item \textbf{双跨越}：$t_{early}^{(i)} = \min\{t^*_1, t^*_2\}$，$t_{late}^{(i)} = \max\{t^*_1, t^*_2\}$
+    \item \textbf{多跨越}：取最早的上跨越和最晚的下跨越
+
+\end{enumerate}
+
+
+
+\textbf{GLM模型结合策略}
+
+当观测数据无法直接确定临界时点时，使用第一问建立的GLM模型进行预测：
+$$\logit(\hat{y}) = -2.4885 + 0.0579 \times t - 0.0750 \times \text{BMI} + 0.0241 \times t^2 - 0.0269 \times \text{BMI}^2 + 0.0265 \times t \times \text{BMI}$$
+
+具体实现流程：
+\begin{enumerate}
+    \item 在观测时间范围内生成1000个等间距点
+    \item 使用GLM模型预测每个点的Y染色体浓度
+    \item 找到最接近阈值$\tau = 0.04$的点作为临界时点
+    \item 若预测误差小于0.01，则接受GLM结果；否则使用观测时间范围的首个点作为备选
+\end{enumerate}
+待所有个体分析完毕，得到如下图：
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=0.8\textwidth]{临界孕周分布1.1.png}
+    \caption{临界孕周分布}
+    \label{fig:1}
+\end{figure}
+\subsubsection{风险函数模型的建立}
+
+\textbf{风险分类定义}
+
+多检风险：检测时点过早或过晚，导致Y染色体浓度未达到检测要求，错过最佳检测时间区间。
+
+晚检风险：检测时点合适，但胎儿不健康。这会导致治疗窗口期缩短。
+
+\textbf{风险函数构建}
+对于个体$i$，其风险函数为：
+\begin{equation}
+R_i(t_{detect}) = \lambda_1 \cdot E_{multi}^{(i)} + \lambda_2 \cdot E_{late}^{(i)}
+\end{equation}
+其中权重满足：$\lambda_1 + \lambda_2 = 1$，$\lambda_1 = 0.7$，$\lambda_2 = 0.3$。
+其中，$\lambda_1$代表在y染色体浓度小于0.04时进行NIPT检测时所造成的资源浪费惩罚项权重，$\lambda_2$代表在y染色体浓度大于0.04时检测,但已经为时已晚造成的孕妇风险惩罚项权重。
+
+\textbf{多检风险计算}
+根据临界时点情况计算多检风险：
+\begin{align}
+E_{multi}^{(i)} &= \begin{cases}
+1, & \text{if } \text{全低于阈值} \\
+1, & \text{if } \text{单个上跨越且} t_{detect} < t_{critical}^{(i)} \\
+1, & \text{if } \text{单个下跨越且} t_{detect} > t_{critical}^{(i)} \\
+1, & \text{if } \text{双跨越且} t_{detect} \notin [t_{early}^{(i)}, t_{late}^{(i)}] \\
+0, & \text{otherwise}
+\end{cases}
+\end{align}
+
+\textbf{晚检风险计算}
+仅对不健康胎儿计算晚检风险：
+\begin{align}
+E_{late}^{(i)} &= \begin{cases}
+w(t_{detect}/7), & \text{if 胎儿不健康且检测时点合适} \\
+0, & \text{otherwise}
+\end{cases}
+\end{align}
+
+时间权重函数：
+\begin{equation}
+w(t) = \begin{cases}
+1, & \text{if } t \leq 12 \text{周} \\
+1 + \frac{t-12}{28-12} \times (3-1), & \text{if } 12 < t < 28 \text{周} \\
+3, & \text{if } t \geq 28 \text{周}
+\end{cases}
+\end{equation}
+\subsubsection{BMI分组优化模型的建立}
+
+\textbf{目标函数}
+\begin{equation}
+\min_{G_1, G_2, \ldots, G_K} \sum_{k=1}^K \min_{t_k} \sum_{i \in G_k} R_i(t_k)
+\end{equation}
+其中$G_k$为第$k$个BMI分组，$t_k$为该组的最优检测时点。
+
+\textbf{约束条件}
+\begin{align}
+&\bigcup_{k=1}^K G_k = \{1, 2, \ldots, N\} \\
+&G_i \cap G_j = \emptyset, \quad i \neq j \\
+&t_k \in [t_{min}, t_{max}], \quad \forall k
+\end{align}
+
+\textbf{分组策略}
+
+使用分位数方法，即先算出每个个体在多次测量中将BMI值分为5组：
+$$Q_k = \text{quantile}(BMI, k/5), \quad k = 0, 1, 2, 3, 4, 5$$
+
+具体分组过程：
+\begin{enumerate}
+    \item 计算BMI值的分位数：$Q_0, Q_1, Q_2, Q_3, Q_4, Q_5$
+    \item 创建5个连续区间：$[Q_0, Q_1), [Q_1, Q_2), [Q_2, Q_3), [Q_3, Q_4), [Q_4, Q_5]$
+    \item 将每个个体分配到对应的BMI区间
+    \item 处理边界情况：最大值个体分配到最后一组
+\end{enumerate}
+
+\subsubsection{模型求解算法}
+
+\textbf{算法流程}
+\begin{enumerate}
+    \item \textbf{初始分组}：使用分位数方法创建5个BMI分组
+    \item \textbf{组内优化}：对每组$G_k$，求解最优检测时点：
+    \begin{equation}
+    t_k^* = \arg\min_{t} \sum_{i \in G_k} R_i(t)
+    \end{equation}
+    \item \textbf{边界微调}：迭代调整BMI分组边界，直到总风险收敛
+    \item \textbf{收敛判断}：当总风险变化小于阈值时停止迭代,以得到趋于最优解的分组边界，其迭代过程如下图所示:
+    \begin{figure}[H]  
+    \centering 
+    \includegraphics[width=0.8\textwidth]{总风险收敛曲线1.1.png}
+    \caption{总风险收敛曲线}
+    \label{fig:1}
+\end{figure}
+    
+    
+\end{enumerate}
+
+使用有界优化算法（bounded optimization）在$[t_{min}, t_{max}]$范围内搜索最优检测时点。
+
+\textbf{参数设置}:
+
+分组数：$K = 5$
+
+最大迭代次数：$T = 10$
+
+多检风险权重：$\lambda_1 = 0.7$
+
+晚检风险权重：$\lambda_2 = 0.3$
+
+
+\subsubsection{结果分析}
+
+\textbf{优化结果：}
+基于267个孕妇个体的优化结果如下：
+
+\begin{table}[H]
+\centering
+\caption{BMI分组及最优检测时点}
+\begin{tabular}{ccccccc}
+\hline
+\toprule
+组别 & BMI范围 & 样本数 & 最优时点(周) & 总风险 & 多检风险 & 晚检风险 \\
+\midrule
+G1 & [20.714, 29.896] & 54 & 17.52 & 5.53 & 5 & 6.76 \\
+G2 & [29.896, 30.941] & 53 & 20.61 & 9.72 & 13 & 2.08 \\
+G3 & [30.941, 32.680] & 53 & 16.25 & 7.46 & 10 & 1.53 \\
+G4 & [32.680, 34.387] & 53 & 18.42 & 3.18 & 3 & 3.60 \\
+G5 & [34.387, 46.864] & 54 & 18.03 & 10.33 & 14 & 1.75 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{主要发现:}
+\begin{enumerate}
+    \item \textbf{BMI与检测时点关系}：
+    \begin{enumerate}
+        \item 低BMI组（G1）：需要较早检测（17.52周），可能是因为Y染色体浓度上升较快
+        \item 中等BMI组（G2-G4）：检测时点在16-21周之间，相对稳定
+        \item 高BMI组（G5）：检测时点适中（18.03周）
+    \end{enumerate}
+    
+    \item \textbf{风险分布特征}：
+    \begin{enumerate}
+        \item G4组风险最低（3.18），G5组风险最高（10.33）
+        \item 多检风险出现较多，晚检风险相对较少
+        \item G1组存在较多晚检风险（6.76），说明该组孕妇容易错过合格检测时段
+    \end{enumerate}
+    
+
+\end{enumerate}
+
+\textbf{个体风险分析}
+
+以G1组为例，详细分析个体风险分布：
+
+
+\begin{table}[H]
+\centering
+\caption{G1组个体风险详情（部分）}
+\begin{tabular}{ccccccc}
+\toprule
+个体 & BMI & 孕周(天) & 多检风险 & 晚检风险 & 早临界时间 & 健康状态 \\
+\midrule
+个体1 & 28.65 & 137.32 & 0 & 0 & 115.91 & 1 \\
+个体17 & 28.47 & 107.01 & 0 & 1.69 & 96.01 & 0 \\
+个体18 & 28.14 & 128.25 & 1 & 0 & 116.33 & 1 \\
+个体75 & 27.92 & 101.01 & 0 & 1.69 & 85.02 & 0 \\
+个体90 & 29.27 & 134.99 & 0 & 1.69 & 95.01 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+从个体风险分析可以看出：健康胎儿主要产生多检风险，而不健康胎儿主要受晚检风险影响。另外，通过临界时点的准确计算，能够更加精确的确定个体的检测时间窗口。
+
+\textbf{临床应用建议}
+
+对于BMI小于30 的孕妇，建议在17-18周进行NIPT检测。对于BMI在中等水平（位于30-34）的孕妇，建议的检测时间在16-21周之间。BMI高于34的孕妇适合在18周左右检测。
+对于G1组孕妇（即BMI属于20.7-29.9），要重点关注晚检风险，可以适当提前进行预检测。而G5组（BMI属于34.4以上）需要重点关注多检风险。
+
+
+
+\textbf{模型评价}
+
+该模型结合数据的线性插值和GLM模型预测，通过网格化搜索和迭代优化，逐步趋近最优解，实现了基于BMI分组的NIPT检测时点优化。模型采用的GLM模型和线性插值确保了临界时点计算的准确性和可靠性。
+
+
+\subsection{问题三模型的建立与求解}
+
+\subsubsection{数据标准化还原}
+原始数据经过标准化处理，需要还原为真实值：
+
+\begin{align}
+BMI_{real} &= BMI_{std} \times 2.97 + 32.29 \\
+GA_{real} &= GA_{std} \times 28.52 + 117.92
+\end{align}
+
+其中：
+\begin{itemize}
+    \item $BMI_{std}$：标准化后的BMI值
+    \item $GA_{std}$：标准化后的孕周值
+    \item $BMI_{real} \in [15, 50]$：限制在合理范围内
+    \item $GA_{real} \in [70, 200]$：限制在合理范围内
+\end{itemize}
+
+\subsubsection{二分类标签定义}
+定义Y染色体达标标签：
+
+\begin{equation}
+Y_{达标} = \begin{cases} 
+1, & \text{if } Y_{浓度} \geq 0.04 \\
+0, & \text{if } Y_{浓度} < 0.04
+\end{cases}
+\end{equation}
+
+\subsubsection{特征工程}
+
+对每个个体$i$，提取以下特征：
+
+\begin{equation}
+\mathbf{x}_i = [age_i, height_i, weight_i, BMI_{i,real}, GA_{i,real}]^T
+\end{equation}
+其中：
+\begin{itemize}
+    \item $age_i$：年龄
+    \item $height_i$：身高
+    \item $weight_i$：体重
+    \item $BMI_{i,real}$：真实BMI值
+    \item $GA_{i,real}$：真实孕周值
+\end{itemize}
+
+\subsubsection{训练数据构建}
+使用所有检测记录构建训练集：
+
+\begin{equation}
+\mathcal{D} = \left\{ (\mathbf{x}_{ij}, y_{ij}) \middle| i = 1, \ldots, N,\ j = 1, \ldots, M_i \right\}
+\end{equation}
+
+其中：
+\begin{itemize}
+    \item $N$：个体总数
+    \item $M_i$：个体$i$的检测次数
+    \item $\mathbf{x}_{ij}$：个体$i$第$j$次检测的特征向量
+    \item $y_{ij}$：个体$i$第$j$次检测的达标标签(Y为0或1)
+\end{itemize}
+
+\subsubsection{逻辑回归模型}
+
+逻辑回归模型用于预测Y染色体达标概率：
+
+\begin{equation}
+P(Y=1|\mathbf{x}) = \frac{1}{1 + e^{-(\beta_0 + \boldsymbol{\beta}^T\mathbf{x})}}
+\end{equation}
+
+其中：
+\begin{itemize}
+    \item $\beta_0$：截距项
+    \item $\boldsymbol{\beta} = [\beta_1, \beta_2, \beta_3, \beta_4, \beta_5]^T$：特征系数向量
+    \item $\mathbf{x} = [age, height, weight, BMI, GA]^T$：特征向量
+\end{itemize}
+
+使用对数似然损失函数：
+
+\begin{equation}
+\mathcal{L}(\boldsymbol{\beta}) = -\sum_{i=1}^{N}\sum_{j=1}^{M_i} [y_{ij}\log(p_{ij}) + (1-y_{ij})\log(1-p_{ij})]
+\end{equation}
+
+其中：
+\begin{equation}
+p_{ij} = P(Y=1|\mathbf{x}_{ij}) = \frac{1}{1 + e^{-(\beta_0 + \boldsymbol{\beta}^T\mathbf{x}_{ij})}}
+\end{equation}
+
+由于Y大于0.04和Y小于0.04的数据不平衡，使用SMOTE算法进行过采样：
+
+\begin{equation}
+\mathcal{D}_{resampled} = \text{SMOTE}(\mathcal{D}, k=5)
+\end{equation}
+
+\subsubsection{BMI聚类分组}
+由于将BMI分为3组或4组后，最后计算出的风险函数值极大，经过衡量，使用分位数方法将BMI分为5组：
+
+\begin{equation}
+Q_k = \text{quantile}(BMI_{values}, \frac{k}{5}), \quad k = 0,1,2,3,4,5
+\end{equation}
+
+\begin{equation}
+G_i = \{j : Q_{i-1} \leq BMI_j < Q_i\}, \quad i = 1,2,3,4,5
+\end{equation}
+分别为：[20.71,29.90], [29.90,30.96], 
+ [30.96,32.68], [32.68,34.39],  [34.39,46.86]
+
+
+\subsubsection{风险函数建模}
+
+对个体$j$在检测时点$t$的风险定义为：
+
+\begin{equation}
+R_j(t) = \lambda_1 \cdot (1 - P_j(t)) + \lambda_2 \cdot P_j(t)
+\end{equation}
+
+其中：
+\begin{itemize}
+    \item $P_j(t) = P(Y=1|\mathbf{x}_j(t))$：个体$j$在时点$t$的达标概率
+    \item $\lambda_1 = 0.7$：未达标权重
+    \item $\lambda_2 = 0.3$：达标权重
+\end{itemize}
+
+
+如果胎儿不健康（$is\_healthy = 0$），添加晚检惩罚：
+
+\begin{equation}
+R_j(t) = \begin{cases}
+\lambda_1 \cdot (1 - P_j(t)) + \text{penalty}(t) \cdot \lambda_2 \cdot P_j(t), & \text{if } is\_healthy = 0 \\
+\lambda_1 \cdot (1 - P_j(t)) , & \text{if } is\_healthy = 1
+\end{cases}
+\end{equation}
+
+其中时间惩罚函数：
+\begin{equation}
+\text{penalty}(t) = \max(0.1, (t - 12) \times 0.2 + 0.1)
+\end{equation}
+
+
+组$G_i$在检测时点$t$的总风险：
+
+\begin{equation}
+R_{G_i}(t) = \sum_{j \in G_i} R_j(t)
+\end{equation}
+
+\subsubsection{优化}
+
+对每个BMI组$G_i$，寻找最优检测时点：
+
+\begin{equation}
+t^*_i = \arg\min_{t \in [70, 175]} R_{G_i}(t)
+\end{equation}
+
+其中搜索范围：$t \in [70, 175]$天（10-25周），步长0.35天（0.05周）。
+
+
+
+\subsubsection{模型评估与解释}
+
+\begin{itemize}
+    \item \textbf{AUC分数}：$AUC = \int_0^1 TPR(FPR^{-1}(u))du$
+    \item \textbf{准确率}：$Accuracy = \frac{TP + TN}{TP + TN + FP + FN}$
+\end{itemize}
+TP代表真阳性的样本个数，TN代表真阴性的样本个数，FP代表假阳性的样本个数，FN代表假阴性的样本个数。
+\begin{table}[H]
+    \centering
+    \caption{模型在不同数据集上的性能指标}  % 表格标题
+    \label{tab:model_performance}  % 表格标签，用于交叉引用（如\autoref{tab:model_performance}）
+    \begin{tabular}{lccccc}  % l=左对齐（数据集），c=居中对齐（5个指标）
+        \toprule  % 顶部粗线条
+        \textbf{数据集} & \textbf{准确率} & \textbf{召回率} & \textbf{精确率} & \textbf{F1} & \textbf{AUC} \\
+        \midrule  % 中间细线条
+        训练集         & 0.848          & 0.848          & 0.833          & 0.822       & 0.921       \\
+        交叉验证集     & 0.818          & 0.818          & 0.800          & 0.787       & 0.778       \\
+        测试集         & 0.988          & 0.988          & 0.982          & 0.985       & 0.999       \\
+        \bottomrule  % 底部粗线条
+    \end{tabular}
+\end{table}
+其中训练集的各项指标均接近或超过0.85，展现出了逻辑回归模型的稳健性。
+
+
+逻辑回归方程如下：
+\begin{equation}
+P(t) = \frac{1}{1 + e^{-(\beta_0 + \beta_1 \cdot age + \beta_2 \cdot height + \beta_3 \cdot weight + \beta_4 \cdot BMI + \beta_5 \cdot t)}}
+\end{equation}
+经过模型的训练，最终拟合出如下参数：
+  $\beta_0$: -17.2386,
+$\beta_1$: -0.1430,
+$\beta_2$: 0.9488,
+$\beta_3$: -2.2972,
+$\beta_4$: 0.5144,
+$\beta_5$: 0.0061。
+
+根据拟合好的模型得到各个孕妇的达标概率，由前面一系列步骤推演迭代，最后得到结果，如下表所示：
+\begin{table}[H]
+  \centering
+  \caption{不同BMI组的个体数量、最优检测时点及最小风险值}
+  \label{tab:bmi_group_stats} % 表格标签（用于引用，可选）
+  \begin{tabular}{ccccc}\toprule % 5列居中对齐，带竖线分隔
+    
+    BMI组 & BMI范围 & 个体数量 & 最优检测时点(周) & 最小风险值 \\\midrule
+    
+    G1 & 20.71-29.90 & 54 & 12.12 & 0.245 \\
+    
+    G2 & 29.90-30.96 & 53 & 11.78 & 0.239 \\
+    
+    G3 & 30.96-32.68 & 53 & 12.36 & 0.251 \\
+    
+    G4 & 32.68-34.39 & 53 & 11.89 & 0.242 \\
+    
+    G5 & 34.39-46.86 & 54 & 12.23 & 0.248 \\ \bottomrule
+    
+  \end{tabular}
+\end{table}
+
+需要说明的是，表中最小风险值相比于问题二中要小得多，这是由于在本问中采用了不同的风险计算方式。
+
+\subsubsection{模型稳定性检验}
+给孕妇的BMI各个分组一个小型的扰动，以及给权重$\lambda_1$一个小型扰动，观察模型最后的最优检测时间点以及风险值的变化，如下图所示：
+
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=0.8\textwidth]{BMI边界扰动敏感性分析图.png}
+    \caption{BMI边界扰动敏感性分析图}
+    \label{fig:1}
+\end{figure}
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=0.8\textwidth]{Lambda1扰动敏感性分析图.png}
+    \caption{$\lambda_1$扰动敏感性分析图}
+    \label{fig:1}
+\end{figure}
+可见随着BMI边界扰动以及$\lambda_1$值的扰动，最优检测时间点以及风险值的变化均在合理范围内，可以视为顺利通过敏感性测试，模型较为稳健。
+
+\subsubsection{与问题二模型的比较与结果差异分析}
+第二问的不足：
+\begin{enumerate}
+   
+\item 第二问采用基于阈值的确定性方法，通过GLM模型预测Y染色体浓度是否达到4$\%$阈值来判断临界时间点,这种方法过度依赖单一阈值（4$\%$），忽略了浓度变化的连续性和个体差异。
+\item 第二问仅着重考虑了孕周(天)以及BMI值对于Y染色体浓度的影响，考虑的因素不够全面，可能是导致最后得到的最佳检测时间波动较大的原因之一。
+\end{enumerate}
+
+  第三问的改进与合理性：
+\begin{enumerate}
+
+\item 采用基于概率的连续风险函数方法，使用逻辑回归预测Y染色体达标概率，将二分类问题转化为连续概率问题，更符合医学检测的实际情况。
+\item 采用SMOTE过采样技术平衡数据集，解决了未达标样本远少于达标样本的类别不平衡问题。
+\item 风险函数设计为$\lambda_1$×(1-达标概率)+(1-$\lambda_1$)×达标概率，结合时间惩罚因子，能够更精确地刻画不同检测时点的风险。
+\item 综合考虑年龄、身高、体重、BMI、孕周等多个因素，构建更全面的个体化预测模型。因此，第三问的结果能够更好地反映不同BMI组孕妇的个体差异，提供更精准的个性化检测时点建议，在医学实践中具有较高的应用价值。
+\item 结果相对于问题二的模型，最优检测时点更为稳定。
+\end{enumerate}
+\subsection{问题四模型的建立与求解}
+问题四是要综合各因素，给出女胎异常的判定方法。由于与前三问关联较小，因此本文单独分析第四问。
+
+\subsubsection{决策树模型的建立}
+在判定女胎异常时，题目中共给出十五个重要的指标：孕妇BMI，原始读段数，在参考基因组上比对的比例，重复读段的比例，唯一比对的读段数，GC含量，13号染色体的Z值，18号染色体的Z值，21号染色体的Z值，X染色体的Z值，X染色体浓度，13号染色体的GC含量，18号染色体的GC含量，21号染色体的GC含量，被过滤掉读段数的比例。
+
+结合相关文献和实际，这十五个因素都可能与女胎异常判定有关\textsuperscript{\cite{7}}，但无法判断每个因素影响程度的大小，决策树分类方法能很好地捕捉复杂的非线性交互关系，天然适合解决问题四这种多特征二分类问题，且对异常值和噪声具有较好的鲁棒性，可以提供便于临床应用的可解释的决策路径，因此本文采用决策树算法来解决问题。
+
+决策树由根节点、内部节点、分支、叶节点四个组成部分：
+\begin{table}[H]
+\centering
+\caption{决策树组成部分定义及示例}
+\begin{tabular}{p{2cm}p{3cm}p{5cm}}
+\hline
+\textbf{组成部分} & \textbf{定义} & \textbf{实际含义示例} \\
+\hline
+根节点 & 决策起点，对应最核心特征 & 孕妇BMI（CSV K列） \\
+内部节点 & 中间判断步骤，对应次要特征 & 孕周（J列）、Y染色体浓度（V列） \\
+分支 & 判断结果，对应特征取值范围 & ``BMI$\geq$ 28''、``Y浓度$\geq$ 4\%'' \\
+叶节点 & 最终决策结果 & ``最佳检测时点：12周'' \\
+\hline
+\end{tabular}
+\end{table}
+\subsubsection{决策树模型的求解}
+决策树的构建如下：
+
+\begin{table}[H]
+  \centering
+  \caption{决策训练参数及含义}
+  \label{tab:model_params}
+  \small % 缩小字体进一步压缩体积
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{参数名}                & \textbf{参数值及含义} \\
+    \midrule
+    训练用时                      & 0.126s（模型训练总耗时） \\
+    数据切分                      & 0.7（训练集占总数据比例，测试集占0.3） \\
+    数据洗牌                      & 否（数据划分前不随机打乱顺序） \\
+    交叉验证                      & 5（5折交叉验证，评估模型泛化性） \\
+    节点分裂评价准则              & gini（用基尼不纯度衡量节点分裂效果\textsuperscript{\cite{2}}） \\
+    特征划分点选择标准            & best（选择最优特征划分点，而非随机） \\
+    划分时考虑的最大特征比例      & None（使用全部特征参与划分，不限制比例） \\
+    内部节点分裂的最小样本数      & 2（节点分裂至少需2个样本，避免过拟合） \\
+    叶子节点的最小样本数          & 1（叶子节点最少含1个样本即可停止分裂） \\
+    叶子节点中样本的最小权重      & 0（叶子节点样本权重无下限，默认样本权重为1） \\
+    叶子节点的最大数量            & 50（模型最多含50个叶子节点，限制树复杂度） \\
+    树的最大深度                  & 10（决策树最深10层，防止树过深导致过拟合） \\
+    节点划分不纯度的阀值          & 0（节点不纯度降至0或不满足其他条件时停止分裂） \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+决策树分类的过程满足``特征选择→递归划分→剪枝优化''的流程：
+
+先由SPSSPRO数据分析平台计算各个特征的重要性如下：
+\begin{figure}[H]  
+    \centering 
+    \includegraphics[width=1.2\textwidth]{特征重要性图.png}
+    \caption{特征重要性图}
+    % \label{fig:1}
+\end{figure}
+
+每一步骤中,最重要的特征能最好地区分不同的样本。计算并比较当前所有特征的“局部重要性”，选择合理的划分点递归分裂，直至全部判断完成。利用训练集数据初步建立决策树分类模型，得到决策树结构如下（完整决策树结构见附件3）：
+\begin{table}[H]
+\centering
+\scalebox{0.5}{ % 调整为合适的缩放比例
+\begingroup
+\small % 同时减小字体大小
+\begin{tabular}{cllccrc}
+\toprule
+\textbf{节点ID} & \textbf{父节点ID} & \textbf{判断条件/类别} & \textbf{女胎是否正常} & \textbf{样本数} & \textbf{样本值} \\
+\midrule
+0 (根节点) & -- & X染色体浓度 $\leq$ -0.025 & 是 & 422 & [371,51] \\
+1 & 0 & GC含量 $\leq$ 0.403 & 是 & 51 & [28,23] \\
+2 & 0 & 18号染色体的GC含量 $\leq$0.385 & 是 & 371 & [343,28] \\
+3              & 1                 & 18号染色体的GC含量 $\leq$0.394 & 否 & 36 & [15,21] \\
+4              & 1                 & 21号染色体的GC含量$\leq$ 0.399 & 是 & 15 & [13, 2] \\
+5              & 2                 & 13号染色体的Z值 $\leq$ -0.65 & 否 & 7 & [2, 5] \\
+6              & 2                 & 13号染色体GC的含量$\leq$0.398 & 是 & 364 & [341,23] \\
+7              & 3                 & 孕妇BMI $\leq$32.96 & 是 & 26 & [15,11] \\
+8              & 3                 & ——& 否 & 10 & [0,10] \\
+9              & 4                 & GC含量 $\leq$0.408 & 否 & 3 & [1,2] \\
+10             & 4                 & ——& 是 & 12 & [12,0] \\
+& & .......................................................\\
+61             & 54                & —— & 是 & 119 & [119,0] \\
+62             & 54                & 原始读段数$\leq$4447675.5 & 是 & 155 & [150,5] \\
+63             & 55                & —— & 是 & 3 & [3,0] \\
+64             & 55                & —— & 否 & 3 & [0,3] \\
+65             & 56                & —— & 是 & 29 & [29,0] \\
+66             & 56                & X染色体浓度$\leq$-0.016 & 是 & 3 & [2,1] \\
+67             & 62                & —— & 否 & 2 & [0,2] \\
+68             & 62                & 被过滤掉读段数的比例$\leq$0.03 & 是 & 153 & [150,3] \\
+69             & 66                & —— & 否 & 1 & [0,1] \\
+70             & 66                & —— & 是 & 2 & [2,0] \\
+71             & 68                & 被过滤掉读段数的比例 $\leq$ 0.03 & 是 & 148 & [146,2] \\
+72             & 68                & —— & 是 & 5 & [4,1] \\
+\bottomrule
+\end{tabular}
+\endgroup
+}
+\caption{决策树结构缩略图（缩放比例：50\%）}
+\label{tab:scaled_table}
+\end{table}
+该决策树在每个节点上经过的频率可间接推出完成一次决策所需要判断各个指标的平均次数，这个平均次数也可以一定程度反映各个指标在做决策过程中的重要程度，如下表所示：
+
+\begin{table}[H]
+  \centering
+  \caption{决策树相关检测指标平均次数}
+  \label{tab:dt4_metrics}
+  \begin{tabular}{lcl}  % 三列左对齐，适配指标名、数值、说明文本
+    \toprule
+    \textbf{指标}                & \textbf{平均次数} & \textbf{说明} \\
+    \midrule
+    平均总判断次数              & 7.66次            & 从根节点到叶节点的平均路径长度 \\
+    X染色体浓度检测次数          & 1.033次           & 在5个节点中使用X染色体浓度判断 \\
+    GC含量检测次数              & 2.794次           & 包括13号、18号、21号染色体GC含量和总体GC含量 \\
+    Z值检测次数                 & 0.098次           & 13号、18号、21号染色体Z值检测 \\
+    BMI检测次数                 & 0.920次           & 孕妇BMI指标检测 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+最后将建立的决策树分类模型应用到训练、测试数据，得到模型的分类评估结果。 
+
+\begin{table}[H]
+  \centering
+  \caption{决策树在训练、测试集上的评估结果}
+  \label{tab:model_performance_metrics}
+  \begin{tabular}{lccccc}  % l=数据集列左对齐，c=指标列居中对齐
+    \toprule
+    \textbf{数据集}   & \textbf{准确率} & \textbf{召回率} & \textbf{精确率} & \textbf{F1}  & \textbf{AUC}  \\
+    \midrule
+    训练集           & 0.986          & 0.986          & 0.986          & 0.985        & 0.995        \\
+    交叉验证集       & 0.822          & 0.822          & 0.823          & 0.819        & 0.600        \\
+    测试集           & 0.863          & 0.863          & 0.874          & 0.868        & 0.822        \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+可见决策树在训练、测试集上均能很好地对“女胎是否异常”这一特征进行分类，各项指标均接近于1，可以很好地应用于现代临床检测中。
+
+\subsubsection{决策树模型的推广}
+由于不同深度的决策树，对应做出“女胎是否异常”的决策所花费的节点决策次数有所不同，而每次决策在实际中会存在一定的时间以及人力成本花销$\omega_0$,该值约为200元。若在检测X染色体上花费的决策次数过多可能会有测试结果不可信的风险，本文假设X染色体的浓度（游离DNA占比）近似服从于正态分布，由3$\sigma$原则，取区间（$\mu$ - 2$\sigma$,$\mu$ + 2$\sigma$)之外的X染色体浓度值不可信，即大约4.5$\%$的X染色体监测数据不可信，设不可信带来的成本潜在花销为$\omega_1$。
+
+经过大量测试，训练集的准确度大约会随着树的深度增加(不超过14,因为要防止过拟合)以及决策次数的增加，每多决策一次提高0.3$\%$,乘上女性的样本个数  N=604，大约可以多检测对2个样本。
+再设样本误检所带来的损失为$\omega_2$,总体来看，决策次数每增加一次，带来的总花销W为200 + 0.045×2500 - 2×$\omega_2$。
+令W=0，解得$\omega_2$=156.25，该值显然能被大多数人所接受，因此在条件允许的条件下，尽量增加决策树的层数是提升综合效益的必要手段，但若层数大于一定值(如14),也会导致检验成本变高而准确率没有提升甚至由于过拟合出现更多误检。
+此外，将决策树模型更换为随机森林模型(RF)，经过对比，模型的准确率、召回率等指标并没有太大变化，证明了“决策树”这一类型模型的普遍稳定性以及本模型不存在过拟合问题。
+\section{模型优缺点评价}
+\subsection{模型的优点}
+\begin{enumerate}
+    \item 模型思路设计简洁而实用，效率高。
+   \item 模型鲁棒性高，可以捕捉线性与非线性的关系，提高了预测稳定性和可解释性。
+   \item 应用SMOTE算法对少数类样本进行采样，能处理类别不平衡问题。
+   \item 问题三模型含有风险函数，问题四模型能输出临床判定规则，具备良好的可解释性与可推广性。
+   \item 模型依据孕妇BMI分组，为其制定差异化的最优检测时间点策略，实现产前检查的精准个性化推荐。
+   \item 问题四模型最后针对实际场景进行了拓展，提高了模型应用潜力。
+\end{enumerate}
+
+\subsection{模型的缺点}
+
+\begin{enumerate}
+    \item 模型效果高度依赖于临床数据的准确性和完整性，各项指标的测量误差会直接影响结果。且附件中所给的BMI较常规情况偏大，考虑的因素较为理想，降低了模型的普适性。
+    \item 使用交叉验证和多模型融合虽提升了性能，但提高了计算的复杂度和模型的维护难度。
+   \item 特征提取过多，有些变量互相有相关性。
+    \item 输出清晰的临床判定规则但可能忽略了某些潜在混杂因素，考虑的条件较为理想。
+\end{enumerate}
+
+\subsection{模型的改进}
+\begin{enumerate}
+    \item 本文依赖于附件中提供的有限数据，虽足以支撑模型的训练和检验，但如果能获取更大规模、含更多影响因素的临床数据，将更进一步提升模型的可推广性。   
+   \item 设计动态模型更新机制，即让模型在线学习，使模型能随新数据不断更新，适应人群变化
+\end{enumerate}
+
+\begin{thebibliography}{99}
+\bibitem{1}蒋丽雅,卢劭侃,杜佳恩,等.无创产前检测技术的发展与应用[J].临床医学研究与实践,2025,10(23):191-194.DOI:10.19347/j.cnki.2096-1413.202523047.
+\bibitem{2} 周志华，机器学习[M].清华大学出版社，2016.
+\bibitem{3} Hou Y, Yang J, Qi Y, Guo F, Peng H, Wang D, Wang Y, Luo X, Li Y, Yin A. Factors affecting cell-free DNA fetal fraction: statistical analysis of 13,661 maternal plasmas for non-invasive prenatal screening. Hum Genomics. 2019 Dec 4;13(1):62. doi: 10.1186/s40246-019-0244-0. PMID: 31801621; PMCID: PMC6894209.
+\bibitem{4} 杜莉敏,郭梦雨,刘书菡.孕妇外周血胎儿游离DNA产前检测在13-三体综合征18-三体综合征和唐氏综合征诊断中的应用[J].实用医技杂志,2025,32(03):204-206.DOI:10.19522/j.cnki.1671-5098.2025.03.011.
+\bibitem{5} 李娟生, 李江红, 刘小宁, 申希平, 米友军．Kendall’s W 分析方法在医学
+数据处理中的应用及在 SPSS 中的实现方法[J].现代预防医学，2008，(01)：33+42.
+\bibitem{6} 徐维超. 相关系数研究综述[J]. 广东工业大学学报,2012,29(3):12-17.
+\bibitem{7} 李少琼.NIPT在IVF妊娠胎儿染色体异常筛查中的临床应用[D].河北医科大学,2024.DOI:10.27111/d.cnki.ghyku.2024.001829.
+\bibitem{8}Scientific Platform Serving for Statistics Professional 2021. SPSSPRO. (Version 1.0.11)[Online Application Software]. Retrieved from https://www.spsspro.com.
+\bibitem{9}GPT, GPT-4.1, OpenAl, 2025-09-05
+\bibitem{10} Doubao,1.5-pro,字节跳动,2025-09-06
+\bibitem{11} DeepSeek,R1 0528,深度求索(DeepSeek),2025-09-05
+\end{thebibliography}
+
+\begin{figure}[h]
+    \centering
+    
+\end{figure}
+\newpage
+\section*{附录}
+
+\subsection*{附录1}
+支撑材料如下：
+
+代码： 
+问题一.py;
+ 问题一、问题二可视化图片代码.py;
+ 问题三图片.py;
+问题三.py;
+ 问题二.py;
+数据归一化.py;
+ 第一问图片.py
+  
+图片：
+最佳模型残差分析图.png;
+ 总风险收敛曲线.png;
+  问题一思维导图.png;
+问题一热力图.png;
+问题一可视化3.png;
+ 问题一可视化2.png;
+ 问题一可视化1.png;
+ 问题二思维导图.png;
+特征重要性图.png;
+ 临界孕周分布1.1.png;
+  分组检测时点分布.png.;
+ 分组覆盖情况.png.;
+ Lambda1扰动敏感性分析图.png;
+ BMI边界扰动敏感性分析图.png;
+ 树深度较为浅的决策树.pdf;
+ 问题四决策树结构图.pdf
+
+清洗后的数据：
+附件 -1 男胎.csv；
+附件 -1.2.1.csv；
+附件 -1.2.2 男胎.csv；
+附件 -1.3 男胎.csv；
+附件 -2 女胎.csv
+
+AI工具使用详情.pdf
+\subsection*{附录2}
+\subsubsection{相关核心代码（完整代码见支撑材料）}
+\lstset{
+    breaklines=true,  % 自动换行
+    breakatwhitespace=true,  % 在空格处换行
+    postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},  % 换行标识
+    basicstyle=\ttfamily\small,  % 使用较小字体
+    frame=single,  % 添加边框
+    columns=flexible  % 灵活的列对齐
+}
+\begin{lstlisting}[language=Python]
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+data_frame = pd.read_csv('附件 -1.2.2 男胎.csv')
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+# 删除孕周为空的行
+cleaned_data = data_frame.dropna(subset=['孕周（天）'])
+
+figure, (axis1, axis2) = plt.subplots(1, 2, figsize=(15, 6))
+unique_codes = cleaned_data['孕妇代码'].unique()
+color_palette = plt.cm.tab20(np.linspace(0, 1, min(len(unique_codes), 20)))
+
+# 绘制Y浓度与孕周的散点图
+for idx, code in enumerate(unique_codes[:20]):
+    subset_data = cleaned_data[cleaned_data['孕妇代码'] == code]
+    axis1.scatter(subset_data['孕周（天）'], subset_data['Y染色体浓度'], 
+               c=[color_palette[idx]], label=code, alpha=0.7, s=30)
+
+axis1.set_xlabel('孕周（天）')
+axis1.set_ylabel('Y染色体浓度')
+axis1.set_title('Y染色体浓度与孕周的关系')
+axis1.grid(True, alpha=0.3)
+
+# 绘制Y浓度与BMI的散点图
+for idx, code in enumerate(unique_codes[:20]):
+    subset_data = cleaned_data[cleaned_data['孕妇代码'] == code]
+    axis2.scatter(subset_data['孕妇BMI'], subset_data['Y染色体浓度'], 
+               c=[color_palette[idx]], label=code, alpha=0.7, s=30)
+
+axis2.set_xlabel('孕妇BMI')
+axis2.set_ylabel('Y染色体浓度')
+axis2.set_title('Y染色体浓度与BMI的关系')
+axis2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('Y浓度与孕周_BMI关系图.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# 计算相关系数
+correlation_week = cleaned_data['孕周（天）'].corr(cleaned_data['Y染色体浓度'])
+correlation_bmi = cleaned_data['孕妇BMI'].corr(cleaned_data['Y染色体浓度'])
+
+print(f"Y染色体浓度与孕周的相关系数: {correlation_week:.4f}")
+print(f"Y染色体浓度与BMI的相关系数: {correlation_bmi:.4f}")
+
+from sklearn.preprocessing import normalize
+import numpy as np
+
+# 数据归一化
+input_matrix = np.array([[1., -1., 2.],
+                         [2., 0., 0.],
+                         [0., 1., -1.]])
+
+normalized_matrix = normalize(input_matrix, norm='l2')
+print(normalized_matrix)
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize_scalar
+
+class NIPTOptimizer:
+    def __init__(self):
+        self.model_params = {
+            'intercept': -2.4885,
+            'GA': 0.0579,
+            'BMI': -0.0750,
+            'GA_sq': 0.0241,
+            'BMI_sq': -0.0269,
+            'GA_BMI': 0.0265
+        }
+        self.Y_THRESHOLD = 0.04
+
+    def predict_y_concentration(self, ga_days, bmi):
+        logit_value = (self.model_params['intercept'] +
+                       self.model_params['GA'] * ga_days +
+                       self.model_params['BMI'] * bmi +
+                       self.model_params['GA_sq'] * (ga_days ** 2) +
+                       self.model_params['BMI_sq'] * (bmi ** 2) +
+                       self.model_params['GA_BMI'] * ga_days * bmi)
+        return 1 / (1 + np.exp(-logit_value))
+
+    def optimize_detection_time(self, group_data):
+        def objective(detection_time):
+            total_risk = self.calculate_group_risk(group_data, detection_time)
+            return total_risk
+            
+        result = minimize_scalar(objective, bounds=(70, 200), method='bounded')
+        return result.x
+
+    def calculate_group_risk(self, group_data, detection_time):
+        total_risk = 0
+        for individual in group_data:
+            risk = self.calculate_individual_risk(individual, detection_time)
+            total_risk += risk
+        return total_risk
+from sklearn.linear_model import LogisticRegression
+from imblearn.over_sampling import SMOTE
+
+class RiskAnalyzer:
+    def __init__(self):
+        self.lambda1 = 0.7
+        self.lambda2 = 0.3
+
+    def build_model(self, X, y):
+        smote = SMOTE(random_state=42)
+        X_resampled, y_resampled = smote.fit_resample(X, y)
+        
+        model = LogisticRegression(random_state=42, max_iter=1000)
+        model.fit(X_resampled, y_resampled)
+        return model
+
+    def predict_probability(self, model, features):
+        return model.predict_proba([features])[0, 1]
+import seaborn as sns
+from scipy import stats
+
+def plot_distribution(data, title, xlabel):
+    plt.figure(figsize=(10, 6))
+    plt.hist(data, bins=20, alpha=0.7, density=True)
+    kde = stats.gaussian_kde(data)
+    x_range = np.linspace(min(data), max(data), 100)
+    plt.plot(x_range, kde(x_range), 'r-', linewidth=2)
+    plt.xlabel(xlabel)
+    plt.ylabel('密度')
+    plt.title(title)
+    plt.grid(True, alpha=0.3)
+    plt.show()
+\end{lstlisting}
+\lstset{
+    breaklines=true,  % 自动换行
+    breakatwhitespace=true,  % 在空格处换行
+    postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},  % 换行标识
+    basicstyle=\ttfamily\small,  % 使用较小字体
+    frame=single,  % 添加边框
+    columns=flexible  % 灵活的列对齐
+}
+\begin{lstlisting}[language=Python]
+def predict_y_concentration(self, ga_days, bmi):
+    """基于GLM模型预测Y染色体浓度"""
+    logit_v = (self.model_params['intercept'] +
+               self.model_params['GA'] * ga_days +
+               self.model_params['BMI'] * bmi +
+               self.model_params['GA_sq'] * (ga_days ** 2) +
+               self.model_params['BMI_sq'] * (bmi ** 2) +
+               self.model_params['GA_BMI'] * ga_days * bmi)
+    return 1 / (1 + np.exp(-logit_v))
+
+def calculate_critical_time(self, individual_data):
+    """计算个体的临界时间（基于趋势分析的修正版）"""
+    y_concentrations = individual_data['y_concentrations']
+    ga_values = individual_data['ga_values']
+    bmi = individual_data['bmi_real']
+    threshold = self.Y_THRESHOLD
+
+    # 情况1：所有观测值均低于阈值
+    if np.all(y_concentrations < threshold):
+        return ga_values[-1], "all_below"
+
+    # 情况2：所有观测值均高于阈值
+    if np.all(y_concentrations > threshold):
+        return ga_values[0], "all_above"
+
+    # 情况3：存在跨越阈值的情况
+    crossings = []
+    crossing_directions = []  # 记录跨越方向：1表示从下到上，-1表示从上到下
+
+    for i in range(len(ga_values) - 1):
+        t1, y1 = ga_values[i], y_concentrations[i]
+        t2, y2 = ga_values[i + 1], y_concentrations[i + 1]
+
+        # 线性插值求交点
+        if (y1 - threshold) * (y2 - threshold) < 0:
+            t_star = t1 + (threshold - y1) * (t2 - t1) / (y2 - y1)
+            crossings.append(t_star)
+            # 判断跨越方向
+            if y1 < threshold and y2 > threshold:
+                crossing_directions.append(1)  # 从下到上
+            else:
+                crossing_directions.append(-1)  # 从上到下
+        elif y1 == threshold:
+            crossings.append(t1)
+            # 根据前后点判断方向
+            if i > 0 and i < len(y_concentrations) - 1:
+                if y_concentrations[i - 1] < threshold and y_concentrations[i + 1] > threshold:
+                    crossing_directions.append(1)
+                elif y_concentrations[i - 1] > threshold and y_concentrations[i + 1] < threshold:
+                    crossing_directions.append(-1)
+                else:
+                    crossing_directions.append(0)  # 无法确定方向
+            else:
+                crossing_directions.append(0)
+        elif y2 == threshold:
+            crossings.append(t2)
+            # 根据前后点判断方向
+            if i > 0 and i < len(y_concentrations) - 1:
+                if y_concentrations[i] < threshold and y_concentrations[i + 2] > threshold:
+                    crossing_directions.append(1)
+                elif y_concentrations[i] > threshold and y_concentrations[i + 2] < threshold:
+                    crossing_directions.append(-1)
+                else:
+                    crossing_directions.append(0)
+            else:
+                crossing_directions.append(0)
+
+    if len(crossings) == 0:
+        # 无交点：回退到GLM模型
+        return self._solve_with_glm(ga_values, bmi)
+
+    # 根据交点数量和方向确定临界时点
+    if len(crossings) == 1:
+        # 单个交点：根据跨越方向确定临界时点含义
+        crossing = crossings[0]
+        direction = crossing_directions[0]
+
+        if direction == 1:  # 从下到上，表示首次达到阈值
+            return crossing, "single_upward"
+        elif direction == -1:  # 从上到下，表示最后低于阈值
+            return crossing, "single_downward"
+        else:  # 方向不明确，使用GLM模型
+            return self._solve_with_glm(ga_values, bmi)
+
+    elif len(crossings) == 2:
+        # 两个交点：根据方向确定临界时点含义
+        crossing1, crossing2 = crossings[0], crossings[1]
+        direction1, direction2 = crossing_directions[0], crossing_directions[1]
+
+        if direction1 == 1 and direction2 == -1:  # 先上后下
+            return crossing1, crossing2, "upward_downward"
+        elif direction1 == -1 and direction2 == 1:  # 先下后上
+            return crossing2, crossing1, "downward_upward"
+        else:  # 方向不明确，使用GLM模型
+            return self._solve_with_glm(ga_values, bmi)
+
+    else:
+        # 多个交点：取最早的上跨越和最晚的下跨越
+        upward_crossings = [crossings[i] for i in range(len(crossings)) if crossing_directions[i] == 1]
+        downward_crossings = [crossings[i] for i in range(len(crossings)) if crossing_directions[i] == -1]
+
+        if upward_crossings and downward_crossings:
+            return min(upward_crossings), max(downward_crossings), "multiple_crossings"
+        elif upward_crossings:
+            return min(upward_crossings), "multiple_upward"
+        elif downward_crossings:
+            return max(downward_crossings), "multiple_downward"
+        else:
+            return self._solve_with_glm(ga_values, bmi)
+
+def calculate_individual_risk(self, individual_data, detection_time):
+    """计算单个个体的风险（基于趋势分析的修正版）"""
+    critical_result = self.calculate_critical_time(individual_data)
+    is_healthy = individual_data['is_healthy']
+
+    multi_error = 0
+    late_error = 0
+
+    # 根据临界时点结果计算风险
+    if len(critical_result) == 2:
+        critical_time, status = critical_result
+
+        if status == "all_below":
+            # 全低于阈值：任何检测时间都是多检误差
+            multi_error = 1
+        elif status == "all_above":
+            # 全高于阈值：如果胎儿不健康，根据检测时间计算晚检误差
+            if not is_healthy:
+                detection_weeks = detection_time / 7
+                if detection_weeks <= 12:
+                    late_weight = 1
+                elif detection_weeks >= 28:
+                    late_weight = 3
+                else:
+                    late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                late_error = late_weight
+        elif status == "single_upward":
+            # 单个上跨越：检测时间早于临界点为多检误差
+            if detection_time < critical_time:
+                multi_error = 1
+            elif not is_healthy:
+                # 检测时间晚于临界点且胎儿不健康为晚检误差
+                detection_weeks = detection_time / 7
+                if detection_weeks <= 12:
+                    late_weight = 1
+                elif detection_weeks >= 28:
+                    late_weight = 3
+                else:
+                    late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                late_error = late_weight
+        elif status == "single_downward":
+            # 单个下跨越：检测时间晚于临界点为多检误差
+            if detection_time > critical_time:
+                multi_error = 1
+            elif not is_healthy:
+                # 检测时间早于临界点且胎儿不健康为晚检误差
+                detection_weeks = detection_time / 7
+                if detection_weeks <= 12:
+                    late_weight = 1
+                elif detection_weeks >= 28:
+                    late_weight = 3
+                else:
+                    late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                late_error = late_weight
+        elif status in ["multiple_upward", "multiple_downward"]:
+            # 多个同向跨越：类似单个跨越处理
+            if status == "multiple_upward":
+                if detection_time < critical_time:
+                    multi_error = 1
+                elif not is_healthy:
+                    detection_weeks = detection_time / 7
+                    if detection_weeks <= 12:
+                        late_weight = 1
+                    elif detection_weeks >= 28:
+                        late_weight = 3
+                    else:
+                        late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                    late_error = late_weight
+            else:  # multiple_downward
+                if detection_time > critical_time:
+                    multi_error = 1
+                elif not is_healthy:
+                    detection_weeks = detection_time / 7
+                    if detection_weeks <= 12:
+                        late_weight = 1
+                    elif detection_weeks >= 28:
+                        late_weight = 3
+                    else:
+                        late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                    late_error = late_weight
+
+    elif len(critical_result) == 3:
+        early_time, late_time, status = critical_result
+
+        if status == "upward_downward":
+            # 先上后下：检测时间在区间内为合适，区间外为多检误差
+            if detection_time < early_time or detection_time > late_time:
+                multi_error = 1
+            elif not is_healthy:
+                # 区间内且胎儿不健康为晚检误差
+                detection_weeks = detection_time / 7
+                if detection_weeks <= 12:
+                    late_weight = 1
+                elif detection_weeks >= 28:
+                    late_weight = 3
+                else:
+                    late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                late_error = late_weight
+        elif status == "downward_upward":
+            # 先下后上：检测时间在区间内为合适，区间外为多检误差
+            if detection_time < early_time or detection_time > late_time:
+                multi_error = 1
+            elif not is_healthy:
+                # 区间内且胎儿不健康为晚检误差
+                detection_weeks = detection_time / 7
+                if detection_weeks <= 12:
+                    late_weight = 1
+                elif detection_weeks >= 28:
+                    late_weight = 3
+                else:
+                    late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                late_error = late_weight
+        elif status == "multiple_crossings":
+            # 多个跨越：检测时间在区间内为合适，区间外为多检误差
+            if detection_time < early_time or detection_time > late_time:
+                multi_error = 1
+            elif not is_healthy:
+                # 区间内且胎儿不健康为晚检误差
+                detection_weeks = detection_time / 7
+                if detection_weeks <= 12:
+                    late_weight = 1
+                elif detection_weeks >= 28:
+                    late_weight = 3
+                else:
+                    late_weight = 1 + (detection_weeks - 12) * (3 - 1) / (28 - 12)
+                late_error = late_weight
+
+    return multi_error, late_error, critical_result
+
+def optimize_detection_time(self, group_individuals):
+    """优化检测时点"""
+    # 获取组内所有个体的孕周范围
+    all_ga_values = []
+    for individual_data in group_individuals.values():
+        all_ga_values.extend(individual_data['ga_values'])
+
+    min_ga = min(all_ga_values)
+    max_ga = max(all_ga_values)
+
+    def objective(detection_time):
+        total_risk, _, _, _ = self.calculate_group_risk(group_individuals, detection_time)
+        return total_risk
+
+    # 在孕周范围内优化
+    result = minimize_scalar(
+        objective,
+        bounds=(min_ga, max_ga),
+        method='bounded'
+    )
+
+    if result.success:
+        optimal_time = result.x
+        optimal_risk, multi_error, late_error, individual_errors = self.calculate_group_risk(
+            group_individuals, optimal_time
+        )
+        return optimal_time, optimal_risk, multi_error, late_error, individual_errors
+    else:
+        # 如果优化失败，返回中点
+        optimal_time = (min_ga + max_ga) / 2
+        optimal_risk, multi_error, late_error, individual_errors = self.calculate_group_risk(
+            group_individuals, optimal_time
+        )
+        return optimal_time, optimal_risk, multi_error, late_error, individual_errors
+\end{lstlisting}
+\subsection*{附录3}
+\begin{itemize}
+    \item 女胎染色体异常判定决策树规则
+    \begin{longtable}[c]{cllccrc}
+\caption{女胎染色体异常判定决策树规则\label{tab:test}} \\
+\toprule
+\textbf{节点ID} & \textbf{父节点ID} & \textbf{判断条件/类别} & \textbf{女胎是否正常} & \textbf{样本数} & \multicolumn{1}{c}{\textbf{样本值}} \\
+\midrule
+\endfirsthead
+
+\multicolumn{6}{c}{{\bfseries 续表\thetable} 女胎染色体异常判定决策树规则} \\
+\toprule
+\textbf{节点ID} & \textbf{父节点ID} & \textbf{判断条件/类别} & \textbf{女胎是否正常} & \textbf{样本数} & \multicolumn{1}{c}{\textbf{样本值}} \\
+\midrule
+\endhead
+
+\midrule
+\multicolumn{6}{r}{{续表见下页}} \\
+\endfoot
+
+\bottomrule
+\endlastfoot
+
+0 (根节点)     & ——               & X染色体浓度 $\leq$ -0.025 & 是 & 422 & [371,51] \\
+1              & 0                 & GC含量 $\leq$ 0.403 & 是 & 51 & [28,23] \\
+2              & 0                 & 18号染色体的GC含量 $\leq$0.385 & 是 & 371 & [343,28] \\
+3              & 1                 & 18号染色体的GC含量 $\leq$0.394 & 否 & 36 & [15,21] \\
+4              & 1                 & 21号染色体的GC含量$\leq$ 0.399 & 是 & 15 & [13, 2] \\
+5              & 2                 & 13号染色体的Z值 $\leq$ -0.65 & 否 & 7 & [2, 5] \\
+6              & 2                 & 13号染色体GC的含量$\leq$0.398 & 是 & 364 & [341,23] \\
+7              & 3                 & 孕妇BMI $\leq$32.96 & 是 & 26 & [15,11] \\
+8              & 3                 & ——& 否 & 10 & [0,10] \\
+9              & 4                 & GC含量 $\leq$0.408 & 否 & 3 & [1,2] \\
+10             & 4                 & ——& 是 & 12 & [12,0] \\
+11             & 5                 & ——& 是 & 2 & [2, 0] \\
+12             & 5                 & ——& 否 & 5 & [0,5] \\
+13             & 6                 & 重复读段比例 $\leq$0.026 & 是 & 359 & [339,20] \\
+14             & 6                 & X染色体浓度 $\leq$ -0.018 & 否 & 5 & [2,3] \\
+15             & 7                 & 孕妇BMI $\leq$ 31.219 & 否 & 19 & [8,11] \\
+16             & 7                 & ——& 是 & 7 & [7,0] \\
+17             & 9                 & ——& 否 & 2 & [0,2] \\
+18             & 9                 & —— & 是 & 1 & [1,0] \\
+19             & 13                & 13号染色体GC含量 $\leq$ 0.373 & 是 & 10 & [7,3] \\
+20             & 13                & 13号染色体GC含量$\leq$0.383 & 是 & 349 & [332,17] \\
+21             & 14                & —— & 否 & 2 & [0,2] \\
+22             & 14                & 18号染色体GC含量$\leq$0.419 & 是 & 3 & [2,1] \\
+23             & 15                & 21号染色体的Z值$\leq$-0.481 & 是 & 10 & [7,3] \\
+24             & 15                & 被过滤掉读段数的比例$\leq$0.027 & 否 & 9 & [1,8] \\
+25             & 19                & —— & 否 & 3 & [0,3] \\
+26             & 19                & —— & 是 & 7 & [4,2] \\
+27             & 20                & 18号染色体的Z值 $\leq$ 0.827 & 是 & 6 & [4,2] \\
+28             & 20                & 13号染色体的GC含量 $\leq$ 0.383 & 是 & 343 & [328,15] \\
+29             & 22                & —— & 是 & 2 & [2,0] \\
+30             & 22                & —— & 否 & 1 & [0,1] \\
+31             & 23                & X染色体浓度 $\leq$ -0.029 & 否 & 4 & [1,3] \\
+32             & 23                & —— & 是 & 6 & [6,0] \\
+33             & 24                & —— & 否 & 8 & [0,8] \\
+34             & 24                & —— & 是 & 1 & [1,0] \\
+35             & 27                & —— & 是 & 4 & [4,0] \\
+36             & 27                & —— & 否 & 2 & [0,2] \\
+37             & 28                & 孕妇BMI $\leq$27.776 & 是 & 321 & [310,11] \\
+38             & 28                & 21号染色体的GC含量 $\leq$0.406 & 是 & 22 & [18,4] \\
+39             & 31                & —— & 否 & 3 & [0,3] \\
+40             & 31                & —— & 是 & 1 & [1,0] \\
+41             & 37                & X染色体浓度 $\leq$ -0.013 & 否 & 2 & [1,1] \\
+42             & 37                & 21号染色体GC的含量$\leq$1.216 & 是 & 319 & [309,10] \\
+43             & 38                & 在参考基因组上比对的比例 $\leq$ 0.792 & 否 & 4 & [1,3] \\
+44             & 38                & 21号染色体的Z值$\leq$1.699 & 是 & 18 & [17,1] \\
+45             & 41                & —— & 否 & 1 & [0,1] \\
+46             & 41                & —— & 是 & 1 & [1,0] \\
+47             & 42                & 被过滤掉读段数的比例$\leq$0.018 & 是 & 281 & [275,6] \\
+48             & 42                & 重复读段的比例 $\leq$ 0.029 & 是 & 38 & [34,4] \\
+49             & 43                & —— & 是 & 1 & [1,0] \\
+50             & 43                & —— & 是 & 3 & [0,3] \\
+51             & 44                & —— & 是 & 15 & [15,0] \\
+52             & 44                & 21号染色体的GC含量 $\leq$0.411 & 是 & 3 & [2, 1] \\
+53             & 47                & 被过滤掉读段数比例$\leq$0.018 & 是 & 7 & [6,1] \\
+54             & 47                & 唯一比对的读段数$\leq$3394902.5 & 是 & 274 & [269,5] \\
+55             & 48                & GC含量$\leq$0.4 & 是 & 6 & [3,3] \\
+56             & 48                & 唯一比对的读段数 $\leq$3971277.5 & 是 & 32 & [31,1] \\
+57             & 52                & —— & 否 & 1 & [0,1] \\
+58             & 52                & —— & 是 & 2 & [2, 0] \\
+59             & 53                & —— & 是 & 6 & [6,0] \\
+60             & 53                & —— & 否 & 1 & [0,1] \\
+61             & 54                & —— & 是 & 119 & [119,0] \\
+62             & 54                & 原始读段数$\leq$4447675.5 & 是 & 155 & [150,5] \\
+63             & 55                & —— & 是 & 3 & [3,0] \\
+64             & 55                & —— & 否 & 3 & [0,3] \\
+65             & 56                & —— & 是 & 29 & [29,0] \\
+66             & 56                & X染色体浓度$\leq$-0.016 & 是 & 3 & [2,1] \\
+67             & 62                & —— & 否 & 2 & [0,2] \\
+68             & 62                & 被过滤掉读段数的比例$\leq$0.03 & 是 & 153 & [150,3] \\
+69             & 66                & —— & 否 & 1 & [0,1] \\
+70             & 66                & —— & 是 & 2 & [2,0] \\
+71             & 68                & 被过滤掉读段数的比例 $\leq$ 0.03 & 是 & 148 & [146,2] \\
+72             & 68                & —— & 是 & 5 & [4,1] \\
+\end{longtable}
+
+\end{itemize}
+
+\end{document}
